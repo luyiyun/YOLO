@@ -32,6 +32,19 @@ class OnlyImage:
         return oupts
 
 
+class Resize:
+    def __init__(self, target_size):
+        self.target_size = target_size
+
+    def __call__(self, inpts):
+        img, labels, locs = inpts
+        w, h = img.size
+        scale_factor = [self.target_size[0] / w, self.target_size[1] / h]
+        img = img.resize(self.target_size)
+        locs = locs * torch.FloatTensor([scale_factor * 2])
+        return img, labels, locs
+
+
 class RandomBlur:
     '''
     随机进行模糊操作（github原代码中给blur设定了一个大小(5,5)，这里使用的PIL没
@@ -130,6 +143,9 @@ class RandomShift:
 
 
 class RandomCrop:
+    '''
+    随机从图片中裁剪一定比例的part
+    '''
     def __init__(self, p=0.5, wh_ratio=(0.6, 0.6)):
         self.p = p
         self.w_ratio, self.h_ratio = wh_ratio

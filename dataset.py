@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from PIL import Image
 import torch.utils.data as data
+from torch.utils.data.dataloader import default_collate
 
 from encoder import YEncoder
 
@@ -42,6 +43,16 @@ def parse_xml(xml_file):
         loc_element = obj.find('bndbox')
         loc = [int(loc_element.findtext(ln)) for ln in loc_name]
         objs_loc.append(loc)
+    # check
+    # size_elem = root.find('size')
+    # w, h = int(size_elem.findtext('width')), int(size_elem.findtext('height'))
+    # locs = np.array(objs_loc)
+    # index = np.concatenate([
+    #     locs[:, :2] < 0, np.expand_dims(locs[:, 2] > w, 1),
+    #     np.expand_dims(locs[:, 3] > h, 1)
+    # ], axis=1).sum()
+    # if index > 0:
+    #     import ipdb; ipdb.set_trace()
     return objs_name, objs_loc, objs_difficult, objs_truncated
 
 
@@ -67,7 +78,10 @@ class VOCDataset(data.Dataset):
             return_tensor，是否将label和loc转换成tensor，默认是True；
             transfers，这里提供对数据集进行处理的transforms，如果是None，则不进
                 行变换；
+            out，控制输出的类型，其值可以是'all'，'obj'，'encode'
         '''
+        assert out in ['all', 'obj', 'encode']
+        # 参数整理
         self.label_mapping = label_mapping
         self.drop_diff = drop_diff
         self.return_tensor = return_tensor
@@ -76,20 +90,20 @@ class VOCDataset(data.Dataset):
         cast_dir = os.path.join(root, 'ImageSets/Main')
         jpg_dir = os.path.join(root, 'JPEGImages')
         xml_dir = os.path.join(root, 'Annotations')
+        # 读取文件名
         if classes is None:
             f = os.path.join(cast_dir, phase + '.txt')
             self.imgs_name = np.loadtxt(f, dtype=str)
         else:
             raise NotImplementedError
-
         if year is not None:
             raise NotImplementedError
-
+        # 补全完整的xml以及jpg路径名
         self.img_files = [
             os.path.join(jpg_dir, n+'.jpg') for n in self.imgs_name]
         self.xml_files = [
             os.path.join(xml_dir, n+'.xml') for n in self.imgs_name]
-
+        # 如果我们要返回encode后的preds，则需要实例化YEncoder对象
         if self.out in ['all', 'encode']:
             self.y_encoder = YEncoder(**kwargs)
 
@@ -97,36 +111,69 @@ class VOCDataset(data.Dataset):
         return len(self.imgs_name)
 
     def __getitem__(self, idx):
+        # 读取相应的文件
         img = self.img_files[idx]
         xml = self.xml_files[idx]
-
         img = Image.open(img)
-
+        # 解析xml文件
         labels = []
         locs = []
         xml_res = parse_xml(xml)
+        # 控制一下difficult的object是否读取
         for label, loc, diff, trun in zip(*xml_res):
             if not (diff and self.drop_diff):
-                if self.label_mapping is not None:
-                    label = self.label_mapping[label]
                 labels.append(label)
                 locs.append(loc)
+        # 如果有label mapping，则将所有的label进行映射
+        if self.label_mapping is not None:
+            new_labels = []
+            for label, loc in zip(labels, locs):
+                new_labels.append(self.label_mapping[label])
+            labels = new_labels
+        # 一般都要变成tensor（进行test的时候可能不需要）
         if self.return_tensor:
             labels = torch.tensor(labels, dtype=torch.float)
             locs = torch.tensor(locs, dtype=torch.float)
+        # 图像处理
         if self.transfers is not None:
             img, labels, locs = self.transfers([img, labels, locs])
+        # 根据不同的out来编码
         if self.out == 'obj':
             return img, labels, locs
         elif self.out in ['all', 'encode']:
+            # pascal数据集上不同图片的大小可能不一样，所以需要这里读取其size输入
+            #   到y_encoder中
             if isinstance(img, Image.Image):
                 img_size = img.size
             elif isinstance(img, torch.Tensor):
-                img_size = img.size()[:2][::-1].tolist()
-            preds = self.y_encoder.encode(labels, locs, img_size)
+                img_size = list(img.size()[-1:-3:-1])
+            try:
+                preds = self.y_encoder.encode(labels, locs, img_size)
+            except IndexError:
+                import ipdb; ipdb.set_trace()
             if self.out == 'encode':
                 return img, preds
             return img, labels, locs, preds
+
+    def collate_fn(self, batch):
+        if self.out == 'encode':
+            return tuple(default_collate(batch))
+        elif self.out == 'obj':
+            img_batch = [b[0] for b in batch]
+            label_batch = [b[1] for b in batch]
+            marker_batch = [b[2] for b in batch]
+            return default_collate(img_batch), label_batch, marker_batch
+        else:
+            img_batch = [b[0] for b in batch]
+            label_batch = [b[1] for b in batch]
+            marker_batch = [b[2] for b in batch]
+            preds_batch = [b[3] for b in batch]
+            return (
+                default_collate(img_batch),
+                label_batch,
+                marker_batch,
+                default_collate(preds_batch)
+            )
 
 
 def test():

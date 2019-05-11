@@ -27,29 +27,32 @@ def boxes_iou(boxes1, boxes2):
     return iou
 
 
-def xywh2xyxy(boxes, cell_size, cell_lt=None):
+def xywh2xyxy(boxes, cell_size, ij=None):
     '''
     将YOLO风格的xywh转换为YOLO风格的xyxy，这里和retina的区别在于其xy center是
     相对于cell左上角的坐标，所以需要乘以cell的边长。
     args：
         boxes，size=[N, 4]；
         cell_size，cell的边长，一般来说，整张图片的长度一般设定为1；
-        cell_lt，理论上，如果我们不使用此参数，得到的xyxy坐标是不准确的，差了
+        * cell_lt，理论上，如果我们不使用此参数，得到的xyxy坐标是不准确的，差了
             一个对应cell左上角坐标，但在计算IoU的时候，这个坐标会被约去，所以
             为了方便起见可以设为None；
+        ij，如果用yolo 网络的输出来计算bboxes的4个坐标，只需要知道其所处的是第
+            几个cell即可以进行计算（因为将两步化简为一步了）
     returns：
         boxes，size=[N, 4]，xyxy格式的，但注意的是其坐标一般来说是将整个图片的w
             h看成1得到的；
     '''
-    xy_min = boxes[:, :2] * cell_size - boxes[:, 2:] / 2 + cell_lt
-    xy_max = boxes[:, :2] * cell_size + boxes[:, 2:] / 2 + cell_lt
-    if cell_lt is not None:
-        xy_min += cell_lt
-        xy_max += cell_lt
+    xyc = boxes[:, :2] * cell_size
+    if ij is not None:
+        xyc = xyc + ij * cell_size
+    xy_min = xyc - boxes[:, 2:] / 2
+    xy_max = xyc + boxes[:, 2:] / 2
     return torch.cat([xy_min, xy_max], dim=1)
 
 
 def nms(boxes, confs, thre=0.5):
+    ''' 非最大化抑制 '''
     x1 = boxes[:, 0]
     y1 = boxes[:, 1]
     x2 = boxes[:, 2]
