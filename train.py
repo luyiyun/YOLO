@@ -1,6 +1,7 @@
 import os
 import copy
 import json
+import platform
 
 import numpy as np
 import pandas as pd
@@ -10,7 +11,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from torchvision import transforms
 from torchvision import models
-from torchvision.transforms import Compose, Resize, Normalize, ToTensor
+from torchvision.transforms import Compose, Normalize, ToTensor
 import progressbar as pb
 
 from dataset import VOCDataset
@@ -23,6 +24,12 @@ from metrics import mAP
 def json_save(obj, fname):
     with open(fname, 'w') as f:
         json.dump(obj, f)
+
+
+def default_root():
+    if platform.system() == 'Windows':
+        return 'G:/dataset/VOC2012/VOCdevkit/VOC2012/'
+    return '/home/dl/code/caolei/faster_rcnn/VOCdevkit/VOC2007/'
 
 
 class History:
@@ -101,10 +108,10 @@ def train(
             y_encoder = dataloaders[phase].dataset.y_encoder
             if phase == 'train':
                 net.train()
-                prefix = 'Training: '
+                prefix = '%d, Training: ' % e
             else:
                 net.eval()
-                prefix = 'Validation: '
+                prefix = '%d, Validation: ' % e
                 # validation时需要记录所有的真实标签和预测
                 epoch_label, epoch_loc = [], []
                 epoch_res_c, epoch_res_s, epoch_res_l = [], [], []
@@ -114,6 +121,7 @@ def train(
                     preds = net(imgs)
                     loss = criterion(preds, targets)
                     if phase == 'train':
+                        optimizer.zero_grad()
                         loss.backward()
                         optimizer.step()
                     else:
@@ -135,7 +143,7 @@ def train(
                 epoch_loss /= num_batches
                 if phase == 'train':
                     history.update_hist(loss=epoch_loss)
-                    print('%s, loss: %.4f' % (phase, epoch_loss))
+                    print('%d, %s, loss: %.4f' % (e, phase, epoch_loss))
                 else:
                     aps, map_score = mAP(
                         epoch_label, epoch_loc, epoch_res_c,
@@ -149,8 +157,8 @@ def train(
                         model_wts=copy.deepcopy(net.state_dict())
                     )
                     print(
-                        '%s, loss: %.4f, mAP: %.4f' %
-                        (phase, epoch_loss, map_score)
+                        '%d, %s, loss: %.4f, mAP: %.4f' %
+                        (e, phase, epoch_loss, map_score)
                     )
     if 'valid' in dataloaders.keys():
         net.load_state_dict(history.best[0]['model_wts'])
@@ -182,7 +190,7 @@ def test(
         APs, mAP_score，如果evaluate=True，则返回每一类的AP值和其mAP；
     '''
     y_encoder = dataloader.dataset.y_encoder
-    y_encoder_mode = dataloader.dataset.y_encoder_mode
+    y_encoder_mode = dataloader.dataset.out
     assert (evaluate and y_encoder_mode in ['obj', 'all']) or not evaluate
     assert (criterion is not None and y_encoder_mode in ['all', 'encode']) or \
         criterion is None
@@ -201,7 +209,7 @@ def test(
             if y_encoder_mode in ['all', 'obj']:
                 labels_true, locs_true = batch[1:3]
             if y_encoder_mode in ['all', 'encode']:
-                targets = batch[-1]
+                targets = batch[-1].to(device)
             preds = net(imgs)
             if criterion is not None:
                 loss = criterion(preds, targets)
@@ -241,6 +249,13 @@ def main():
     parser.add_argument(
         '-sd', '--save_dir', default='./YOLOresults',
         help="结果保存的根目录，默认是./YOLOresults"
+    )
+    parser.add_argument(
+        '-dr', '--data_root', default=default_root(),
+        help=(
+            "数据所在的路径，用于VOCDataset，默认是使用default_root，"
+            "根据操作系统来进行选择"
+        )
     )
     parser.add_argument(
         '-S', default=7, type=int, help='图像在w和h上被平分为SxS个cells，默认是7'
@@ -320,18 +335,18 @@ def main():
     # 数据集
     datasets = {
         'train': VOCDataset(
-            'G:/dataset/VOC2012/VOCdevkit/VOC2012/', phase='train',
+            args.data_root, phase='train',
             drop_diff=True, return_tensor=True, transfers=train_trans,
             out='encode', **y_encoder_args
         ),
         'valid': VOCDataset(
-            'G:/dataset/VOC2012/VOCdevkit/VOC2012/', phase='val',
+            args.data_root, phase='val',
             drop_diff=True, return_tensor=True, transfers=test_trans,
             out='all', **y_encoder_args
         ),
         # 因为暂时还没有test数据，暂时使用valid来替代
         'test': VOCDataset(
-            'G:/dataset/VOC2012/VOCdevkit/VOC2012/', phase='val',
+            args.data_root, phase='val',
             drop_diff=True, return_tensor=True, transfers=test_trans,
             out='all', **y_encoder_args
         )

@@ -105,7 +105,7 @@ class YEncoder:
         res_c, res_s, res_l = cls_index[keep], scores[keep], remain_locs[keep]
         if img_size is not None:
             res_l = res_l * torch.tensor(
-                [list(img_size) * 2], dtype=torch.float)
+                [list(img_size) * 2], dtype=torch.float, device=res_l.device)
 
         return res_c, res_s, res_l
 

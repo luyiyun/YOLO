@@ -21,7 +21,7 @@ def mAP(
     true_cls, true_loc, pred_cls, pred_score, pred_loc, iou_thre=0.5,
     num_class=20, ap_func=compute_ap
 ):
-    device = pred_cls[0].device()
+    device = pred_cls[0].device
     true_cls = [tc.to(device) for tc in true_cls]
     true_loc = [tl.to(device) for tl in true_loc]
     all_classes = torch.cat(pred_cls, dim=0)
